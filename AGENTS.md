@@ -1,5 +1,8 @@
 # Working on UnSaid
 
+When resuming ongoing work, read `HANDOFF.md` for the last verified state,
+uncommitted changes, open user reports, and next verification steps.
+
 ## Product and current stack
 
 - Read the specification in https://github.com/RickBarretto/ideas/issues/24.
