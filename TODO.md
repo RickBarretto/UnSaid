@@ -21,7 +21,7 @@ and agreement; Tauri/Svelte and browser-native media remain the chosen stack.
 - [x] Compact reference-based layout, actual manual-cut counts and disabled pending features.
 - [x] Unit/browser regression coverage and screenshot checks; no fake media/detection data.
 - [ ] Recheck latest Selection loading, Edited boundary skips and Undo/Redo in the affected native webview/source.
-- [x] Compare the current reference layout at desktop and narrow widths; record differences in `design-qa.md`.
+- [x] Review the reference-based layout at desktop and narrow widths.
 - [ ] Verify playback, visualization and cut boundaries on Windows, macOS and Linux webviews.
 
 ## Phase 1: precision review and manual operations

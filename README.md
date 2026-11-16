@@ -88,7 +88,8 @@ additional system packages or runtimes as an automatic build workaround.
 Current verification: zero Svelte/TypeScript errors or warnings, a successful
 production build, ten passing unit tests, and 24 passing Chromium tests.
 The two newest seek-race tests were also observed failing before their fixes.
-See [design-qa.md](design-qa.md) for the reference comparison and its limits.
+The interface follows the visual reference in the linked product specification
+and the checked-in `reference.png`.
 
 ```sh
 mise exec -- bun run check
