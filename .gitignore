@@ -29,3 +29,6 @@ dist/
 test-results/
 playwright-report/
 .env
+
+# Tauri-generated capability and platform schemas
+/src-tauri/gen/schemas/
