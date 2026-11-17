@@ -1,3 +1,4 @@
+import { parseProject } from './project';
 import type { NativeMedia } from './nativeProject';
 
 const databaseName = 'unsaid-browser';
@@ -95,11 +96,22 @@ export async function readMedia(path: string): Promise<Uint8Array> {
   return new Uint8Array(await (await mediaFile(path)).arrayBuffer());
 }
 
-export async function pickProject(): Promise<{ path: string; text: string } | null> {
+export async function pickProject(): Promise<{ path: string; text: string; localAutosave?: boolean } | null> {
   const file = await chooseFile('.json,application/json', 'Choose project file');
   if (!file) return null;
   const text = await file.text();
-  await writeProject(file.name, text);
+  // A downloaded JSON is a backup. Opening it must not destroy newer
+  // autosaved undo/redo state for the same project and source.
+  const project = parseProject(text);
+  const localText = await get<string>(`project:${file.name}`);
+  if (localText) {
+    try {
+      const local = parseProject(localText);
+      if (local.source.path === project.source.path && local.updatedAt > project.updatedAt) {
+        return { path: file.name, text: localText, localAutosave: true };
+      }
+    } catch { /* A damaged cached copy must not block opening a valid backup. */ }
+  }
   return { path: file.name, text };
 }
 

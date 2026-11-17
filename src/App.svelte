@@ -18,6 +18,7 @@
   let pendingPath: string | null = null;
   let restoring = false;
   let recovered = false;
+  let openingLocalAutosave = false;
   let writeQueue = Promise.resolve();
   let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
   let prompt = $state<{ message: string; choices: string[] } | null>(null);
@@ -59,7 +60,7 @@
         await storage.writeProject(target, serializeProject(portable(project, target)));
         projectPath = target;
         savedContent = content;
-        saveStatus = snapshot() && signature(snapshot()!) === content ? (browserMode ? 'Saved locally' : 'Saved') : 'Unsaved';
+        saveStatus = snapshot() && signature(snapshot()!) === content ? (browserMode ? (automatic ? 'Autosaved locally' : 'Saved locally') : 'Saved') : 'Unsaved';
         if (!automatic) storage.downloadProject?.(target, serializeProject(project));
       });
       writeQueue = task.catch(() => {});
@@ -127,6 +128,7 @@
         error = 'Project source is missing. Use Locate source to relink it.';
         return;
       }
+      openingLocalAutosave = !!picked.localAutosave;
       await attachProject(project, media, picked.path);
     } catch (cause) { error = `Project could not be opened: ${describe(cause)}`; }
     finally { projectBusy = false; }
@@ -161,7 +163,12 @@
       if (projectPath) void persist(false, true);
       else {
         const text = serializeProject(snapshot()!);
-        const task = writeQueue.then(() => storage.writeRecovery(null, text));
+        const content = signature(snapshot()!);
+        const task = writeQueue.then(async () => {
+          await storage.writeRecovery(null, text);
+          const current = snapshot();
+          if (current && signature(current) === content) saveStatus = browserMode ? 'Autosaved locally' : 'Recovery saved';
+        });
         writeQueue = task.catch((cause) => { error = `Recovery could not be saved: ${describe(cause)}`; });
       }
     }, 750);
@@ -323,7 +330,8 @@
   $effect(() => {
     const progress = Math.floor(position * 2) / 2;
     const currentReady = ready;
-    void progress; void currentReady;
+    const decisions = [edits, speed, mode];
+    void progress; void currentReady; void decisions;
     if (browserMode) untrack(checkpointBrowser);
   });
   function selected(event: Event) {
@@ -555,7 +563,7 @@
           element.playbackRate = speed;
           requestSeek(Math.min(duration, project.position));
           savedContent = recovered ? '' : signature({ ...project, source: { path: source!.path, name: source!.name, size: source!.size, duration } });
-          pendingProject = null; restoring = false; saveStatus = recovered ? 'Unsaved' : 'Saved'; recovered = false;
+          pendingProject = null; restoring = false; saveStatus = recovered ? 'Unsaved' : browserMode ? (openingLocalAutosave ? 'Autosaved locally' : 'Saved locally') : 'Saved'; recovered = false; openingLocalAutosave = false;
         }
         if (!thumbnailStarted && analysisController && duration > 0) {
           thumbnailStarted = true;

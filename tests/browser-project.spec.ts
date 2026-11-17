@@ -52,7 +52,7 @@ async function importClip(page: Page) {
   await expect(page.locator('[aria-label="Video thumbnails"] img')).toHaveCount(8);
 }
 
-async function cutRegion(page: Page) {
+async function cutRegion(page: Page, regionStart = 0.3, regionEnd = 0.7) {
   const rail = page.getByRole('group', { name: 'Drag across source timeline to select a region' });
   await rail.scrollIntoViewIfNeeded();
   const bounds = (await rail.boundingBox())!;
@@ -64,12 +64,12 @@ async function cutRegion(page: Page) {
   const end = page.getByRole('spinbutton', { name: /^Selection end/ });
   await start.fill('0');
   await start.press('Tab');
-  await end.fill('0.7');
+  await end.fill(String(regionEnd));
   await end.press('Tab');
-  await start.fill('0.3');
+  await start.fill(String(regionStart));
   await start.press('Tab');
   await page.getByRole('button', { name: 'Remove selection', exact: true }).click();
-  await expect(page.getByRole('list', { name: 'Removed regions' })).toContainText('0.300–0.700');
+  await expect(page.getByRole('list', { name: 'Removed regions' })).toContainText(`${regionStart.toFixed(3)}–${regionEnd.toFixed(3)}`);
 }
 
 async function openMenu(page: Page) {
@@ -98,6 +98,113 @@ async function downloadProject(page: Page, shortcut = false) {
     source: { path: string; name: string; size: number };
   };
 }
+
+async function readBrowserRecord<T>(page: Page, key: string): Promise<T | undefined> {
+  return page.evaluate(async (recordKey) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('unsaid-browser', 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      return await new Promise<unknown>((resolve, reject) => {
+        const transaction = db.transaction('files', 'readonly');
+        const request = transaction.objectStore('files').get(recordKey);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+        transaction.onabort = () => reject(transaction.error);
+      });
+    } finally { db.close(); }
+  }, key) as Promise<T | undefined>;
+}
+
+type StoredProject = {
+  edits: { cuts: { start: number; end: number }[]; past: unknown[] };
+  speed: number;
+};
+
+test('paused cut autosaves recovery before the first explicit Save', async ({ page }) => {
+  await page.goto('/');
+  let downloads = 0;
+  page.on('download', () => downloads++);
+  await importClip(page);
+  await cutRegion(page);
+  await expect(page.locator('.save-status')).toHaveText('Autosaved locally');
+  const recovery = await readBrowserRecord<{ path: string | null; text: string }>(page, 'recovery');
+  expect(recovery?.path).toBeNull();
+  const stored = JSON.parse(recovery!.text) as StoredProject;
+  expect(stored.edits.cuts).toEqual([{ start: 0.3, end: 0.7 }]);
+  expect(stored.edits.past).toHaveLength(1);
+  expect(downloads).toBe(0);
+  await page.reload();
+  await page.getByRole('button', { name: 'Recover', exact: true }).click();
+  await expect(page.getByRole('list', { name: 'Removed regions' })).toContainText('0.300–0.700');
+});
+
+test('edits after explicit Save update the local project without another download', async ({ page }) => {
+  await page.goto('/');
+  let downloads = 0;
+  page.on('download', () => downloads++);
+  await importClip(page);
+  await cutRegion(page);
+  await openMenu(page);
+  await downloadProject(page);
+  expect(downloads).toBe(1);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect.poll(async () => {
+    const text = await readBrowserRecord<string>(page, 'project:browser-project.unsaid.json');
+    return text ? JSON.parse(text).edits.cuts : null;
+  }).toEqual([]);
+  await expect(page.locator('.save-status')).toHaveText('Autosaved locally');
+  const text = await readBrowserRecord<string>(page, 'project:browser-project.unsaid.json');
+  expect(text).toBeDefined();
+  const project = JSON.parse(text!) as StoredProject;
+  expect(project.edits.cuts).toEqual([]);
+  expect(project.speed).toBe(1);
+  expect(downloads).toBe(1);
+});
+
+test('a fast reload after a paused cut recovers the latest edit', async ({ page }) => {
+  await page.goto('/');
+  await importClip(page);
+  await cutRegion(page);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Recover', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Recover', exact: true }).click();
+  await expect(page.getByRole('list', { name: 'Removed regions' })).toContainText('0.300–0.700');
+});
+
+test('opening a downloaded project keeps newer local undo and redo state', async ({ page }) => {
+  await page.goto('/');
+  await importClip(page);
+  await cutRegion(page, 0.3, 0.7);
+  await cutRegion(page, 1, 1.3);
+  await openMenu(page);
+  const downloaded = await downloadProject(page);
+  expect(downloaded.edits.cuts).toEqual([{ start: 0.3, end: 0.7 }, { start: 1, end: 1.3 }]);
+
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.getByRole('list', { name: 'Removed regions' })).toContainText('0.300–0.700');
+  await expect(page.getByRole('list', { name: 'Removed regions' })).not.toContainText('1.000–1.300');
+  await expect.poll(async () => {
+    const text = await readBrowserRecord<string>(page, 'project:browser-project.unsaid.json');
+    return text ? (JSON.parse(text) as StoredProject).edits.cuts.length : -1;
+  }).toBe(1);
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Discard', exact: true }).click();
+  await openMenu(page);
+  const projectChooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Open project', exact: true }).click();
+  await (await projectChooser).setFiles({
+    name: 'browser-project.unsaid.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(downloaded)),
+  });
+  await expect(page.getByRole('list', { name: 'Removed regions' })).toContainText('0.300–0.700');
+  await expect(page.getByRole('list', { name: 'Removed regions' })).not.toContainText('1.000–1.300');
+  await expect(page.getByRole('button', { name: 'Redo', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await expect(page.getByRole('list', { name: 'Removed regions' })).toContainText('1.000–1.300');
+});
 
 test('browser Save downloads a project that reopens with media and edit history', async ({ page }) => {
   await page.goto('/');
