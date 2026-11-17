@@ -1,13 +1,200 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack, tick } from 'svelte';
   import SelectionTimeline from './lib/SelectionTimeline.svelte';
   import CleanupPanel from './lib/CleanupPanel.svelte';
   import { analyzeMedia, makeThumbnails, type AudioAnalysis } from './lib/mediaAnalysis';
   import { emptyEdits, removeRegion, restoreRegion, undoEdit, redoEdit, editedDuration, sourceToEdited, editedToSource, nextPlayableTime, keptRegions, type Region } from './lib/edits';
 
+  import { parseProject, serializeProject, type Project } from './lib/project';
+  import { storage, desktop, nativeListeners, browserMode } from './lib/projectStorage';
+  import { cacheMedia } from './lib/browserProject';
+  import { onDesktopDrop, onDesktopClose, type NativeMedia } from './lib/nativeProject';
+
+  let source = $state<NativeMedia | null>(null);
+  let projectPath = $state<string | null>(null);
+  let saveStatus = $state('Unsaved');
+  let savedContent = '';
+  let pendingProject = $state<Project | null>(null);
+  let pendingPath: string | null = null;
+  let restoring = false;
+  let recovered = false;
+  let writeQueue = Promise.resolve();
+  let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
+  let prompt = $state<{ message: string; choices: string[] } | null>(null);
+  let answer: ((value: string) => void) | undefined;
+  let projectBusy = $state(false);
+  const ask = (message: string, choices: string[]) => new Promise<string>((resolve) => {
+    prompt = { message, choices }; answer = resolve;
+  });
+  function respond(value: string) { prompt = null; answer?.(value); answer = undefined; }
+  const describe = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
+
+  function snapshot(): Project | null {
+    if (!source || !duration || !ready) return null;
+    return { version: 1, source: { path: source.path, name: source.name, size: source.size, duration },
+      edits: $state.snapshot(edits), position: Math.min(duration, position),
+      mode: mode === 'edited' ? 'edited' : 'original', speed, updatedAt: Date.now() };
+  }
+  function signature(project: Project) { return JSON.stringify({ source: project.source, edits: project.edits, speed: project.speed, mode: project.mode }); }
+  function portable(project: Project, path: string): Project {
+    const parent = path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1);
+    const sourcePath = project.source.path;
+    return { ...project, source: { ...project.source, absolutePath: sourcePath,
+      path: parent && sourcePath.startsWith(parent) ? sourcePath.slice(parent.length) : sourcePath } };
+  }
+  async function persist(saveAs = false, automatic = false): Promise<boolean> {
+    if (!snapshot()) return false;
+    let path = projectPath;
+    try {
+      if (!path || saveAs) path = await storage.chooseProjectPath(path ?? `${source!.name}.unsaid.json`);
+      if (!path) return false;
+      const project = snapshot();
+      if (!project) return false;
+      clearTimeout(autosaveTimer);
+      const target = path;
+      const content = signature(project);
+      saveStatus = 'Saving';
+      const task = writeQueue.then(async () => {
+        await storage.writeRecovery(target, serializeProject(project));
+        await storage.writeProject(target, serializeProject(portable(project, target)));
+        projectPath = target;
+        savedContent = content;
+        saveStatus = snapshot() && signature(snapshot()!) === content ? (browserMode ? 'Saved locally' : 'Saved') : 'Unsaved';
+        if (!automatic) storage.downloadProject?.(target, serializeProject(project));
+      });
+      writeQueue = task.catch(() => {});
+      await task;
+      return true;
+    } catch (cause) { saveStatus = 'Save failed'; error = `Project could not be saved: ${describe(cause)}`; return false; }
+  }
+  async function leaveSession(): Promise<boolean> {
+    clearTimeout(autosaveTimer);
+    await writeQueue;
+    const current = snapshot();
+    if (!current || signature(current) === savedContent) return true;
+    if (projectPath && await persist(false, true)) return true;
+    const choice = await ask('Save your project before leaving this session?', ['Save', 'Discard', 'Cancel']);
+    if (choice === 'Save') return persist();
+    if (choice === 'Discard') { await storage.clearRecovery(); return true; }
+    return false;
+  }
+  async function probe(media: NativeMedia): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const element = document.createElement('video');
+      const timer = setTimeout(() => finish(new Error('Source metadata timed out.')), 10000);
+      function finish(cause?: Error) {
+        clearTimeout(timer);
+        const value = element.duration;
+        element.onloadedmetadata = null; element.onerror = null;
+        element.removeAttribute('src'); element.load();
+        if (cause || !Number.isFinite(value) || value <= 0) reject(cause ?? new Error('Invalid source duration.'));
+        else resolve(value);
+      }
+      element.onloadedmetadata = () => finish();
+      element.onerror = () => finish(new Error('Source media cannot be decoded. Locate a supported source.'));
+      element.src = media.url;
+    });
+  }
+  async function attachProject(project: Project, media: NativeMedia, path: string | null) {
+    const measured = await probe(media);
+    if (media.size !== project.source.size || Math.abs(measured - project.source.duration) > 0.1) {
+      if (await ask('This source differs in size or duration. Use it with the saved cut timings?', ['Use source', 'Cancel']) !== 'Use source') return false;
+      if (measured < project.source.duration) throw new Error('Replacement is shorter than the saved source. Choose the original media to preserve cut timings.');
+    }
+    recovered ||= media.path !== (project.source.absolutePath ?? project.source.path) || media.size !== project.source.size || Math.abs(measured - project.source.duration) > 0.1;
+    restoring = true;
+    openFile(undefined, media);
+    projectPath = path;
+    pendingProject = project;
+    pendingPath = path;
+    return true;
+  }
+  async function openProject() {
+    if (projectBusy) return;
+    projectBusy = true;
+    try {
+      const picked = await storage.pickProject();
+      if (!picked) return;
+      const project = parseProject(picked.text);
+      if (!await leaveSession()) return;
+      let media: NativeMedia;
+      try {
+        const path = storage.resolveSource ? await storage.resolveSource(picked.path, project.source.path) : project.source.path;
+        try { media = await storage.loadMedia(path); }
+        catch (cause) { if (!project.source.absolutePath) throw cause; media = await storage.loadMedia(project.source.absolutePath); }
+      } catch {
+        pendingProject = project; pendingPath = picked.path;
+        error = 'Project source is missing. Use Locate source to relink it.';
+        return;
+      }
+      await attachProject(project, media, picked.path);
+    } catch (cause) { error = `Project could not be opened: ${describe(cause)}`; }
+    finally { projectBusy = false; }
+  }
+  async function locateSource() {
+    if (!pendingProject || projectBusy) return;
+    projectBusy = true;
+    try { const media = await storage.pickMedia(); if (media) await attachProject(pendingProject, media, pendingPath); }
+    catch (cause) { error = describe(cause); }
+    finally { projectBusy = false; }
+  }
+  async function importMedia(path?: string) {
+    if (projectBusy) return;
+    projectBusy = true;
+    try {
+      const media = path ? await storage.loadMedia(path) : await storage.pickMedia();
+      if (media && await leaveSession()) { pendingProject = null; projectPath = null; savedContent = ''; openFile(undefined, media); }
+    } catch (cause) { error = describe(cause); }
+    finally { projectBusy = false; }
+  }
+  $effect(() => {
+    const dependencies = [source, duration, ready, edits, speed, mode];
+    void dependencies;
+    const current = untrack(snapshot);
+    if (restoring || pendingProject || !current) return;
+    // Track edit and review preferences, not the continuously advancing playhead.
+    const content = signature(current);
+    clearTimeout(autosaveTimer);
+    if (content === savedContent) return;
+    saveStatus = 'Unsaved';
+    autosaveTimer = setTimeout(() => {
+      if (projectPath) void persist(false, true);
+      else {
+        const text = serializeProject(snapshot()!);
+        const task = writeQueue.then(() => storage.writeRecovery(null, text));
+        writeQueue = task.catch((cause) => { error = `Recovery could not be saved: ${describe(cause)}`; });
+      }
+    }, 750);
+  });
+  onMount(() => {
+    const cleanups: (() => void)[] = [];
+    let mounted = true;
+    const register = (cleanup: () => void) => mounted ? cleanups.push(cleanup) : cleanup();
+    if (nativeListeners) {
+      void onDesktopDrop((path) => void importMedia(path)).then(register);
+      void onDesktopClose(leaveSession).then(register);
+    }
+    void (async () => {
+      try {
+        const recovery = await storage.readRecovery();
+        if (!recovery || !mounted) return;
+        const project = parseProject(recovery.text);
+        if (await ask('An interrupted editing session is available.', ['Recover', 'Discard']) === 'Discard') { await storage.clearRecovery(); return; }
+        try {
+          const media = await storage.loadMedia(project.source.path);
+          recovered = true;
+          await attachProject(project, media, recovery.path);
+          savedContent = ''; // Recovered edits must be written to the project.
+        } catch { pendingProject = project; pendingPath = recovery.path; error = 'Recovery source is missing. Use Locate source.'; }
+      } catch (cause) { error = `Recovery unavailable: ${describe(cause)}`; }
+    })();
+    return () => { mounted = false; clearTimeout(autosaveTimer); cleanups.forEach((cleanup) => cleanup()); };
+  });
+
   let video = $state<HTMLVideoElement>();
   let picker: HTMLInputElement;
   let url = $state('');
+  let ownedUrl: string | undefined;
   let filename = $state('');
   let playing = $state(false);
   let loading = $state(false);
@@ -40,8 +227,32 @@
   const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
   const canRestoreSelection = $derived(!!selection && edits.cuts.some((cut) => cut.start < selection!.end && cut.end > selection!.start));
 
-  function openFile(file?: File) {
-    if (!file) return;
+  async function readAnalysisFile(media: NativeMedia, signal: AbortSignal): Promise<File> {
+    if (storage.readMedia) {
+      try {
+        const bytes = await storage.readMedia(media.path);
+        if (signal.aborted) throw new DOMException('Analysis cancelled', 'AbortError');
+        if (bytes.byteLength !== media.size) throw new Error('Incomplete native media read');
+        return new File([bytes.slice().buffer], media.name);
+      } catch (cause) {
+        if (signal.aborted) throw cause;
+        // A running desktop binary can predate a frontend hot reload. Keep
+        // asset reads available when the newer native command is unavailable.
+      }
+    }
+    const response = await fetch(media.url, { signal });
+    if (!response.ok) throw new Error('Source bytes could not be read for audio analysis. Playback is still available.');
+    const blob = await response.blob();
+    if (blob.size !== media.size) throw new Error('Source read was incomplete. Audio analysis is unavailable; playback is still available.');
+    return new File([blob], media.name);
+  }
+
+  function openFile(file?: File, native?: NativeMedia) {
+    if (!file && !native) return;
+    const originalFile = file;
+    source = native ?? null;
+    if (native && !file) file = new File([], native.name, { type: 'video/mp4' });
+    file = file!;
     if (file.type && !file.type.startsWith('video/') && !/\.(mp4|m4v|mov|webm|mkv|avi|ogv|ogg)$/i.test(file.name)) {
       error = 'Choose a video file, such as MP4, WebM, or MOV.';
       return;
@@ -50,8 +261,10 @@
     analysisController?.abort();
     video?.pause();
     cancelFrame();
-    if (url) URL.revokeObjectURL(url);
-    url = URL.createObjectURL(file);
+    if (ownedUrl) URL.revokeObjectURL(ownedUrl);
+    const reloadSource = !!native && url === native.url;
+    url = native?.url ?? URL.createObjectURL(file);
+    ownedUrl = browserMode || !native ? url : undefined;
     filename = file.name;
     playing = false;
     loading = true;
@@ -70,16 +283,53 @@
     analysisStatus = 'Preparing waveform and spectrum…';
     const controller = new AbortController();
     analysisController = controller;
-    void analyzeMedia(file, controller.signal).then((result) => {
+    if (reloadSource) void tick().then(() => { if (!controller.signal.aborted) video?.load(); });
+    void (native && !originalFile ? (native.size > 256 * 1024 * 1024 ? Promise.reject(new Error('Audio analysis supports files up to 256 MiB. Playback is still available.')) : readAnalysisFile(native, controller.signal).then((file) => analyzeMedia(file, controller.signal))) : analyzeMedia(file, controller.signal)).then((result) => {
       if (!controller.signal.aborted) { analysis = result; analysisStatus = ''; }
     }).catch((cause: unknown) => {
       if (!controller.signal.aborted) analysisStatus = cause instanceof Error ? cause.message : 'Audio visualization unavailable.';
     });
   }
 
+  let importGeneration = 0;
+  async function importBrowserFile(file?: File) {
+    if (!file) return;
+    if (file.type && !file.type.startsWith('video/') && !/\.(mp4|m4v|mov|webm|mkv|avi|ogv|ogg)$/i.test(file.name)) {
+      error = 'Choose a video file, such as MP4, WebM, or MOV.'; return;
+    }
+    const generation = ++importGeneration;
+    const previousReady = ready;
+    checkpointBrowser();
+    ready = false; loading = true;
+    clearTimeout(autosaveTimer);
+    try {
+      const media = await cacheMedia(file);
+      if (generation !== importGeneration || disposed) { URL.revokeObjectURL(media.url); return; }
+      clearTimeout(autosaveTimer);
+      await writeQueue;
+      pendingProject = null; projectPath = null; savedContent = ''; recovered = false; restoring = false;
+      openFile(file, media);
+    } catch (cause) { if (generation === importGeneration) { ready = previousReady; loading = false; error = `Video could not be stored locally: ${describe(cause)}`; } }
+  }
+  function checkpointBrowser() {
+    if (!browserMode || restoring || pendingProject) return;
+    const current = snapshot();
+    if (!current) return;
+    const path = projectPath;
+    const text = serializeProject(current);
+    const task = writeQueue.then(() => storage.writeRecovery(path, text));
+    writeQueue = task.catch((cause) => { error = `Recovery could not be saved: ${describe(cause)}`; });
+  }
+  $effect(() => {
+    const progress = Math.floor(position * 2) / 2;
+    const currentReady = ready;
+    void progress; void currentReady;
+    if (browserMode) untrack(checkpointBrowser);
+  });
   function selected(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
-    openFile(input.files?.[0]);
+    if (browserMode) void importBrowserFile(input.files?.[0]);
+    else openFile(input.files?.[0]);
     input.value = '';
   }
 
@@ -87,7 +337,7 @@
     event.preventDefault();
     event.stopPropagation();
     dragging = false;
-    openFile(event.dataTransfer?.files[0]);
+    if (browserMode) void importBrowserFile(event.dataTransfer?.files[0]);
   }
 
   function invalidateSeek() {
@@ -299,6 +549,14 @@
         ready = true;
         loading = false;
         error = '';
+        if (restoring && pendingProject) {
+          const project = pendingProject;
+          edits = project.edits; speed = project.speed; mode = project.mode;
+          element.playbackRate = speed;
+          requestSeek(Math.min(duration, project.position));
+          savedContent = recovered ? '' : signature({ ...project, source: { path: source!.path, name: source!.name, size: source!.size, duration } });
+          pendingProject = null; restoring = false; saveStatus = recovered ? 'Unsaved' : 'Saved'; recovered = false;
+        }
         if (!thumbnailStarted && analysisController && duration > 0) {
           thumbnailStarted = true;
           const controller = analysisController;
@@ -374,7 +632,13 @@
 
   function keydown(event: KeyboardEvent) {
     const target = event.target as HTMLElement;
-    if (event.repeat || event.altKey || target?.closest('input, select, textarea, button, [contenteditable="true"]')) return;
+    if (event.repeat || event.altKey) return;
+    if ((event.ctrlKey || event.metaKey) && ['s', 'o'].includes(event.key.toLowerCase())) {
+      event.preventDefault();
+      if (event.key.toLowerCase() === 'o') void openProject(); else void persist(event.shiftKey);
+      return;
+    }
+    if (target?.closest('input, select, textarea, button, [contenteditable="true"]')) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
       event.preventDefault();
       history(event.shiftKey ? 'redo' : 'undo');
@@ -432,12 +696,17 @@
     invalidateSeek();
     cancelFrame();
     video?.pause();
-    if (url) URL.revokeObjectURL(url);
+    if (ownedUrl) URL.revokeObjectURL(ownedUrl);
   });
 </script>
 
-<svelte:window onkeydown={keydown} ondragover={(event) => event.preventDefault()} ondrop={drop} />
+<svelte:window onpagehide={checkpointBrowser} onkeydown={keydown} ondragover={(event) => event.preventDefault()} ondrop={drop} />
 
+{#if prompt}
+  <div class="prompt-backdrop"><div role="dialog" tabindex="-1" aria-modal="true" aria-label="Project confirmation" class="project-prompt">
+    <p>{prompt.message}</p><div>{#each prompt.choices as choice}<button onclick={() => respond(choice)}>{choice}</button>{/each}</div>
+  </div></div>
+{/if}
 <main class="workspace">
   <header class="app-header">
     <div class="brand">
@@ -448,11 +717,18 @@
     <span class="mode-badge">{mode === 'edited' ? 'Edited' : mode === 'selection' ? 'Selection' : 'Original'}</span>
     <input class="file-input" tabindex="-1" bind:this={picker} type="file" accept="video/*,.mkv,.mov,.avi,.m4v" onchange={selected} aria-label="Choose a local video" />
     <div class="header-actions">
+        <button aria-label="Save project" disabled={!ready || !source || projectBusy} onclick={() => void persist()}>Save</button>
+        <span role="status" class="save-status">{saveStatus}</span>
+        <details class="project-menu"><summary>Project</summary><div>
+          <button disabled={projectBusy} onclick={() => void openProject()}>Open project</button>
+          <button disabled={!ready || !source || projectBusy} onclick={() => void persist(true)}>Save project as</button>
+          {#if pendingProject}<button onclick={() => void locateSource()}>Locate source</button>{/if}
+        </div></details>
       <div class="history-buttons">
         <button aria-label="Undo" title="Undo (Ctrl/Cmd+Z)" disabled={!edits.past.length} onclick={() => history('undo')}><img src="/icons/arrow-back-up.svg" alt="" /></button>
         <button aria-label="Redo" title="Redo (Shift+Ctrl/Cmd+Z)" disabled={!edits.future.length} onclick={() => history('redo')}><img src="/icons/arrow-forward-up.svg" alt="" /></button>
       </div>
-      <button class="icon-button open-button" aria-label={url ? 'Replace video' : 'Open video'} title={url ? 'Replace video' : 'Open video'} onclick={() => picker.click()}><img src="/icons/folder-open.svg" alt="" /></button>
+      <button class="icon-button open-button" aria-label={url ? 'Replace video' : 'Open video'} title={url ? 'Replace video' : 'Open video'} onclick={() => desktop ? void importMedia() : picker.click()}><img src="/icons/folder-open.svg" alt="" /></button>
       <button class="primary" disabled title="Export is not implemented yet"><img src="/icons/upload.svg" alt="" /> Export…</button>
     </div>
   </header>
@@ -488,7 +764,7 @@
         <div class="video-icon" aria-hidden="true"><img src="/icons/device-tv.svg" alt="" /></div>
         <h1>{dragging ? 'Drop to open your video' : 'A space for your video'}</h1>
         <p>Drop a video here, or choose one from your computer.</p>
-        <button class="primary" onclick={() => picker.click()}>Open video</button>
+        <button class="primary" onclick={() => desktop ? void importMedia() : picker.click()}>Open video</button>
         <span class="privacy">Local playback. No uploads.</span>
       </div>
     {/if}
@@ -511,7 +787,7 @@
   </div>
 
   <section class="editor" aria-label="Region editing">
-    {#if error}<div class="error" role="alert"><span>{error}</span><button onclick={() => picker.click()}>Choose another video</button></div>{/if}
+    {#if error}<div class="error" role="alert"><span>{error}</span><button onclick={() => desktop ? void importMedia() : picker.click()}>Choose another video</button></div>{/if}
     {#key url}
     <SelectionTimeline {duration} {position} {selection} {analysis} {thumbnails} {analysisStatus} cuts={edits.cuts} disabled={!ready || !duration} onselect={setSelection}>
     {#snippet controls()}
@@ -539,3 +815,13 @@
     {#if ready && mode === 'edited' && outputDuration === 0}<p class="edit-empty">All video is removed. Undo a cut or switch to Original to keep reviewing.</p>{/if}
   </section>
 </main>
+
+<style>
+  .save-status { font-size: 11px; white-space: nowrap; }
+  .project-menu { position: relative; font-size: 12px; }
+  .project-menu summary { cursor: pointer; padding: 8px; }
+  .project-menu > div { position: absolute; right: 0; top: 100%; z-index: 20; background: #fff; padding: 8px; border-radius: 12px; box-shadow: 0 4px 20px #33225533; width: 160px; display: grid; gap: 6px; }
+  .prompt-backdrop { position: fixed; inset: 0; background: #21153d66; z-index: 100; display: grid; place-items: center; }
+  .project-prompt { max-width: 440px; background: #fff; padding: 24px; border-radius: 16px; }
+  .project-prompt div { display: flex; justify-content: flex-end; gap: 12px; }
+</style>

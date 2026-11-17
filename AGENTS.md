@@ -1,5 +1,8 @@
 # Working on UnSaid
 
+Read `README.md` for the current implementation, limitations and setup, and
+`TODO.md` for remaining product scope and the next milestones.
+
 ## Product and current stack
 
 - Read the specification in https://github.com/RickBarretto/ideas/issues/24.
