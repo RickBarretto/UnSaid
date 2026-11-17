@@ -14,7 +14,7 @@ export async function pickMedia(): Promise<NativeMedia | null> {
 export async function loadMedia(path: string): Promise<NativeMedia> {
   return withUrl(await invoke<MediaInfo>('load_media', { path }));
 }
-export async function pickProject(): Promise<{ path: string; text: string } | null> {
+export async function pickProject(): Promise<{ path: string; text: string; localAutosave?: boolean } | null> {
   return invoke('pick_project');
 }
 export async function writeProject(path: string, text: string): Promise<void> {

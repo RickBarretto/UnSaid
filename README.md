@@ -79,7 +79,12 @@ Unsupported or malformed project files leave the current session intact.
 In the browser, Save downloads a small project JSON; Ctrl/Cmd+S also works while
 controls have focus. Open project (Ctrl/Cmd+O) reads a saved JSON file. Autosave
 updates a local browser copy after 750 ms without downloading another file.
-Use Save again when you want an updated downloadable backup. Rendered Export
+Use Save again when you want an updated downloadable backup. Opening an older
+download uses the newer local autosave when the project filename and source
+match, preserving the current cuts and both Undo/Redo stacks. Discarding the
+startup recovery prompt removes that recovery snapshot, not a named project's
+saved local copy. The status changes to **Autosaved locally** only after the
+write finishes. Rendered Export
 remains disabled because video rendering is a later milestone.
 
 Imported videos are copied into IndexedDB on this device so reopening a saved
