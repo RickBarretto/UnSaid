@@ -6,7 +6,7 @@ Checked items mean implemented in the current code, not verified on every
 platform. All future media backends or dependencies need a concrete requirement
 and agreement; Tauri/Svelte and browser-native media remain the chosen stack.
 
-## Current manual editing slice
+## Completed manual review and cut slice
 
 - [x] Tauri shell, Svelte frontend, mise-managed tools and local Bun setup.
 - [x] Local file picker/drop import, embedded synced A/V playback, replacement cleanup and codec errors.
@@ -20,11 +20,34 @@ and agreement; Tauri/Svelte and browser-native media remain the chosen stack.
 - [x] Bounded local audio analysis in a worker; recoverable visualization errors without blocking playback.
 - [x] Compact reference-based layout, actual manual-cut counts and disabled pending features.
 - [x] Unit/browser regression coverage and screenshot checks; no fake media/detection data.
-- [ ] Recheck latest Selection loading, Edited boundary skips and Undo/Redo in the affected native webview/source.
+- [x] User reviewed the reported Selection loading, Edited skip, and Undo/Redo flows and confirmed they work.
 - [x] Review the reference-based layout at desktop and narrow widths.
-- [ ] Verify playback, visualization and cut boundaries on Windows, macOS and Linux webviews.
 
-## Phase 1: precision review and manual operations
+The completed slice is not the full manual-editing phase: gain, soft mute,
+shorten, protection, and export remain open; native persistence validation is pending. Keep restores
+manual cuts; automatic suggestion rejection and protection are future work.
+Audio visualization depends on a browser-supported audio codec and accepts files
+up to 256 MiB. It averages channels to mono at 16 kHz and displays a bounded
+512-sample STFT (up to 1,600 columns); it is not a full spectral editor. Video
+playback and thumbnail codec support also depend on the platform webview.
+
+## Next priorities
+
+1. Validate native project save/reopen, autosave, recovery and missing-source handling.
+2. Complete manual operations and their reversible preview behavior.
+3. Implement and validate export using the same edit semantics.
+4. Add reviewable detection only after the manual workflow is reliable.
+
+## Project persistence and shared edit semantics
+
+- [x] Versioned project JSON storing supported cuts and undo/redo in original source time; additional operation types remain future work.
+- [x] Native save/reopen, autosave and recovery implemented; native runtime validation remains pending. Browser save/download, IndexedDB media persistence, reload recovery and shortcuts are also implemented.
+- [ ] Cache analysis/model results without rerunning models after each edit.
+- [ ] Undo/redo for every supported operation and review decision.
+- [ ] Use the same cut/operation semantics for preview and export.
+- [x] Missing-source relinking and replacement checks implemented without modifying original files; native runtime validation remains pending.
+
+## Manual operations and precision review (partial phase 1)
 
 - [ ] Timeline click-to-seek, wheel/keyboard zoom, frame stepping and fine audio increments.
 - [ ] Multichannel waveform and configurable waveform/spectrum/both display modes.
@@ -40,7 +63,16 @@ and agreement; Tauri/Svelte and browser-native media remain the chosen stack.
 - [ ] Room-tone handling and click-free cut transitions.
 - [ ] Warn about speech overlap and risky operation boundaries.
 
-## Phase 2: silence detection
+## Export
+
+- [ ] Final review before rendering.
+- [ ] H.264/AAC MP4 preserving source resolution/FPS, with quality settings.
+- [ ] Cleaned audio-only output and EDL JSON.
+- [ ] Define precise cut rendering; re-encoding may be required.
+- [ ] Validate preview/export boundaries, fades, room tone and A/V synchronization.
+- [ ] Investigate EDL/XML compatibility with external editors after core export works.
+
+## Silence detection
 
 - [ ] Adaptive RMS/noise floor plus local voice activity detection.
 - [ ] Threshold, minimum speech/silence, padding, retained pause and sensitivity controls.
@@ -48,7 +80,7 @@ and agreement; Tauri/Svelte and browser-native media remain the chosen stack.
 - [ ] Preview and accept/reject suggestions before changing the edit plan.
 - [ ] Synthetic and real speech fixtures covering quiet speech, background noise and false positives.
 
-## Phase 3: speech, fillers, and transcript
+## Speech, fillers, and transcript
 
 - [ ] Offline ASR with word timestamps for pt-BR and English.
 - [ ] Hesitations/discourse markers, repetitions, false starts and reformulations.
@@ -59,7 +91,7 @@ and agreement; Tauri/Svelte and browser-native media remain the chosen stack.
 - [ ] Text corrections independent of audio edits.
 - [ ] Forced alignment after the basic transcript workflow is reliable.
 
-## Phase 4: acoustic events and noise
+## Acoustic events and noise
 
 - [ ] Separate event classifier for coughs, sneezes, throat clearing, breaths, sniffs and mouth sounds.
 - [ ] Detect external impulses with reviewable provenance/confidence.
@@ -76,24 +108,6 @@ and agreement; Tauri/Svelte and browser-native media remain the chosen stack.
 - [ ] Find similar events and project-specific exclusions after repeated rejection.
 - [ ] Keep manual cuts distinguishable from automatic suggestions.
 
-## Project persistence and shared edit semantics
-
-- [ ] Versioned project/EDL storing all operations in original source time.
-- [ ] Save/reopen, autosave and recovery; current cuts/history are memory-only.
-- [ ] Cache analysis/model results without rerunning models after each edit.
-- [ ] Undo/redo for every supported operation and review decision.
-- [ ] Use the same cut/operation semantics for preview and export.
-- [ ] Handle replaced/missing source media without modifying original files.
-
-## Export
-
-- [ ] Final review before rendering.
-- [ ] H.264/AAC MP4 preserving source resolution/FPS, with quality settings.
-- [ ] Cleaned audio-only output and EDL JSON.
-- [ ] Define precise cut rendering; re-encoding may be required.
-- [ ] Validate preview/export boundaries, fades, room tone and A/V synchronization.
-- [ ] Investigate EDL/XML compatibility with external editors after core export works.
-
 ## Distribution and performance
 
 - [ ] Configurable profiles and local model setup/cache management.
@@ -105,6 +119,7 @@ and agreement; Tauri/Svelte and browser-native media remain the chosen stack.
 
 ## Acceptance and platform verification
 
+- [ ] Verify playback, visualization and cut boundaries on Windows, macOS and Linux webviews.
 - [ ] Verify original-file integrity through import, analysis, edits and export.
 - [ ] Exercise offline import/analyze/export and reversible operations.
 - [ ] Test quiet speech, ambiguous fillers and conservative semantic decisions.
