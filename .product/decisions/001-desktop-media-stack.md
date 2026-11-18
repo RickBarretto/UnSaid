@@ -1,6 +1,6 @@
 ---
 status: accepted
-date: 2026-11-18
+date: 2026-11-16
 ---
 
 # Use Tauri/Svelte with browser-native media
