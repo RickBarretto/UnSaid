@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>UnSaid — Unified prototype</title><link rel="stylesheet" href="unified.css"><script defer src="unified.js"></script></head>
+<body>
+<main class="workspace">
+  <section class="preview" aria-label="Video preview">
+    <video id="video" playsinline preload="metadata" aria-label="Local video"></video>
+    <div class="empty-preview" id="empty"><button class="open-video" id="open-video"><img src="../icons/folder-open.svg" alt="">Open video</button></div>
+  </section>
+  <header class="session island">
+    <a class="brand" href="/" title="Open main editor">UnSaid</a><span class="separator"></span><span id="filename">Untitled</span>
+    <button id="open" title="Open local video"><img src="../icons/folder-open.svg" alt="">Open</button>
+    <button disabled title="Project saving is available in the main editor">Save</button>
+    <button disabled title="Export is planned">Export</button>
+    <input type="file" id="file" accept="video/*,.mkv,.mov,.avi,.m4v" hidden>
+  </header>
+  <div class="appearance island"><button id="theme" aria-label="Use dark mode" title="Switch theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M20.6 13.2A8.6 8.6 0 0 1 10.8 3.4a8.7 8.7 0 1 0 9.8 9.8Z"/></svg><span id="theme-label">Dark</span></button></div>
+  <section class="timeline-zone" aria-label="Timeline">
+    <nav class="view-tools island" aria-label="Timeline display">
+      <button id="waveform" class="active" aria-pressed="true"><img src="../icons/wave-sine.svg" alt=""><span>Waveform</span></button>
+      <button id="spectrum" aria-pressed="false"><img src="../icons/adjustments-horizontal.svg" alt=""><span>Spectrum</span></button>
+      <span class="rail-divider"></span>
+      <button id="fit" title="Fit the whole recording"><img src="../icons/arrows-diagonal.svg" alt=""><span>Fit</span></button>
+    </nav>
+    <div class="timeline-main">
+      <div class="selection-tip island" id="selection-tip" role="group" aria-label="Selection tools">
+        <div class="tip-fields"><label>In<input id="start" aria-label="Selection start in seconds" type="number" min="0" step="0.01" value="24.6"></label><label>Out<input id="end" aria-label="Selection end in seconds" type="number" min="0" step="0.01" value="26"></label><span id="selection-duration">1.400 s</span></div>
+        <div class="tip-actions"><button class="primary" id="remove"><img src="../icons/cut.svg" alt="">Remove</button><button id="keep"><img src="../icons/check.svg" alt="">Keep</button><button id="deselect" aria-label="Deselect" title="Deselect"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+      </div>
+      <div class="ruler" id="ruler" aria-hidden="true"></div>
+      <div class="signal" id="signal" tabindex="0" role="group" aria-label="Timeline. Drag to select, use selection handles or numeric fields to refine.">
+        <canvas id="wave" aria-label="Illustrative waveform"></canvas><canvas id="spectrum-canvas" hidden aria-label="Illustrative spectrum"></canvas>
+        <div id="cuts" aria-hidden="true"></div>
+        <div class="selection" id="selection"><button class="handle start" id="handle-start" aria-label="Selection start" title="Drag start; arrow keys adjust by 10 ms"></button><button class="handle end" id="handle-end" aria-label="Selection end" title="Drag end; arrow keys adjust by 10 ms"></button></div>
+        <div class="playhead" id="playhead" aria-hidden="true"></div>
+      </div>
+      <div class="timeline-meta"><span id="cut-summary">2 cuts · 3.20 s removed</span><span id="duration">01:42.800</span></div>
+    </div>
+  </section>
+  <section class="transport island" aria-label="Playback controls">
+    <button id="undo" aria-label="Undo" title="Undo (Ctrl/Cmd+Z)"><img src="../icons/arrow-back-up.svg" alt=""></button>
+    <button id="redo" aria-label="Redo" title="Redo (Ctrl/Cmd+Shift+Z)" disabled><img src="../icons/arrow-forward-up.svg" alt=""></button>
+    <span class="separator"></span>
+    <button class="primary play" id="play" disabled aria-label="Play video" title="Open a video to play"><img id="play-icon" src="../icons/player-play.svg" alt=""></button>
+    <output class="time" id="time">00:24.600</output>
+    <div class="modes" role="group" aria-label="Preview mode"><button data-mode="original" class="active" aria-pressed="true">Original</button><button data-mode="edited" aria-pressed="false">Edited</button><button data-mode="selected" aria-pressed="false">Selected</button></div>
+    <span class="separator"></span>
+    <label class="speed"><span class="sr-only">Playback speed</span><select id="speed" aria-label="Playback speed"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label>
+  </section>
+  <footer><span>Prototype</span><span id="notice" role="status">Illustrative waveform · local video preview</span></footer>
+</main>
+</body></html>
