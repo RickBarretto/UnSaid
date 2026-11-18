@@ -1,20 +1,14 @@
 # Working on UnSaid
 
-Read `README.md` for the current implementation, limitations and setup, and
-`TODO.md` for remaining product scope and the next milestones.
+## Product Context
 
-## Product and current stack
+This repo uses product.md. At the start of every session, read:
+- `.product/STRATEGY.md` — vision, positioning, target user
+- `.product/ROADMAP.md` — current quarter milestones
+- `.product/CONTEXT.md` — architecture constraints, key decisions
+- `.product/specs/` — feature specs (read any that are relevant to your task)
 
-- Read the specification in https://github.com/RickBarretto/ideas/issues/24.
-  Its last comment contains the visual reference for the application.
-- Build a desktop application with **Tauri and Svelte**. The previous Iced
-  implementation was rejected; do not restore it or `iced_video_player`.
-- For the current playback milestone, use the webview's built-in HTML video
-  element. Do not add FFmpeg, ffplay, libmpv, GStreamer bindings, or a separate
-  player process. Revisit media backends only when a concrete requirement calls
-  for one and the user has agreed to the change.
-- Keep media local and preserve original files. The eventual editor must use
-  non-destructive edits.
+Always check the `status` frontmatter in specs before implementing.
 
 ## Work incrementally
 
@@ -26,21 +20,9 @@ Read `README.md` for the current implementation, limitations and setup, and
 
 ## Tools and dependencies
 
-- **The user has mise.** Inspect the existing mise configuration and installed
-  tools before declaring a compiler, package manager, or runtime missing.
-- Use mise-managed tools. A tool missing from the agent's PATH does not prove
-  that the user lacks it; check activation and installed toolchains first.
-- Keep the dependency footprint small. Prefer browser/platform capabilities
-  and the chosen framework's facilities over extra libraries and services.
-- Use the existing mise-managed Bun for project JavaScript dependencies.
-  Keep dependency manifests and lockfiles consistent.
-- Do not install global/system packages, add another toolchain manager, or
-  download standalone runtimes as a workaround for a failed build. Report the
-  concrete prerequisite and its purpose instead of chasing more packages.
-- Do not reintroduce dependencies from the abandoned implementation. Remove
-  obsolete dependencies and generated artifacts as the stack changes.
-- Cleanup must target additions made for this task; preserve unrelated tools,
-  user files, and pre-existing dependencies.
+- The user has **mise**. Inspect the existing mise settings before declaring something is missing. 
+- Don't try to use additional stuff, 3rd-parties. The supply chain should be lean to avoid malware, surface risks and other many issues that comes with large supply chain surface. 
+- Don't install anything at global workspace unless requested by the user.
 
 ## Delegation
 
